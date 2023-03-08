@@ -1,0 +1,180 @@
+import os
+import time
+import csv
+import re
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from bs4 import BeautifulSoup
+from selenium.common.exceptions import NoSuchElementException
+
+max_try = 20
+retry_count = 0
+# 设置Chrome浏览器选项
+options = Options()
+options.add_argument('--headless')
+options.add_argument('--disable-gpu')
+options.add_argument('--disable-dev-shm-usage')
+options.add_argument('--no-sandbox')
+
+# 设置驱动路径
+driver_path = '/usr/local/bin/chromedriver'
+
+# 步骤1： 读取指定路径下的CSV文件
+# 处理库的路径
+folder_path = '/Users/aa/Desktop/python boxs/unsupervised/处理库'
+csv_files = [f for f in os.listdir(folder_path) if f.endswith('.csv')]
+
+# 初始化存储所有数据的列表
+total_data = []
+foot_data = []
+
+# 循环处理每个CSV文件
+for csv_file in csv_files:
+    # 拼接CSV文件的完整路径
+    csv_path = os.path.join(folder_path, csv_file)
+
+    # 初始化该文件的处理结果列表
+    foot_data = []
+
+    # 读取CSV文件内容
+    with open(csv_path, 'r') as f:
+        # 跳过第一行
+        next(f)
+        # 获取A,B,C,E列的内容
+        data = []
+        for row in csv.reader(f):
+            data.append((row[0], row[1], row[2], row[4]))
+
+    # 打开浏览器
+    driver = webdriver.Chrome(service=Service(executable_path=driver_path), options=options)
+
+    # 步骤2：循环处理中E列数据中的每一个网址
+    for a, b, c, e in data:
+        # print(f"处理 {e}")
+
+        # print(foot_data)
+        # 打开E列的网址
+        try:
+            driver.get(e)
+
+            # 等待页面加载完成
+            # 等待网页加载
+            while retry_count < max_try:
+                try:
+                    # 等待 3 秒钟，检查页面是否加载完成
+                    time.sleep(1.5)
+                    driver.find_element(By.XPATH, "//button[contains(@class,'icon-refresh')]")
+                    # 如果能找到刷新按钮，说明页面还没加载完成，点击刷新按钮
+                    driver.refresh()
+                    retry_count += 1
+                except NoSuchElementException:
+                    # 如果找不到刷新按钮，说明页面加载完成了，退出循环
+                    break
+            # 如果尝试了多次，页面还是没有加载完成，抛出错误提示
+            if retry_count == max_try:
+                raise Exception("页面加载失败")
+            wait = WebDriverWait(driver, 2)
+            date_element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.row")))
+
+            # 步骤3：获取日期信息
+            date_text = date_element.text
+            # 判断日期信息是否符合格式要求
+            match = re.search(r"\d{4}-\d{2}-\d{2}", date_text)
+
+            if match:
+                date = match.group(0)
+                # foot_data.append((a, b, c, e, date))
+            else:
+                raise Exception("日期信息格式不符合要求")
+            # print(f"日期信息：{date}")#程序完成后删除
+            # print(foot_data)
+        except Exception as e:
+            # 页面元素加载失败，打印错误信息并继续处理下一个URL
+            print(f"获取日期信息失败: {e}，URL: {e}")
+            continue
+        # 步骤4：包含 "Crow" 的行，打开指数走势元素的网址
+        try:
+
+            rows = driver.find_elements(By.CSS_SELECTOR, "table#odds tr")
+            for row in rows:
+                # 匹配包含 "Crow" 的行
+                if re.search("Crow", row.text):
+                    # 查找指数走势元素并获取网址
+                    detail_url = row.find_element(By.CSS_SELECTOR,
+                                                  "a[title='指数走势'][target='_blank']").get_attribute("href")
+        except Exception as e:
+            print(f"未找到指数走势元素: {e}")
+            driver.quit()
+
+        # 步骤5
+        driver.get(detail_url)
+        # 等待网页加载
+        while retry_count < max_try:
+            try:
+                # 等待 3 秒钟，检查页面是否加载完成
+                time.sleep(3)
+                driver.find_element(By.XPATH, "//button[contains(@class,'icon-refresh')]")
+                # 如果能找到刷新按钮，说明页面还没加载完成，点击刷新按钮
+                driver.refresh()
+                retry_count += 1
+            except NoSuchElementException:
+                # 如果找不到刷新按钮，说明页面加载完成了，退出循环
+                break
+        # 如果尝试了多次，页面还是没有加载完成，抛出错误提示
+        if retry_count == max_try:
+            raise Exception("页面加载失败")
+        # time.sleep(3)
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
+        # 找到包含指定字符串的行
+        rows = soup.find_all('tr', {'align': 'center', 'bgcolor': '#fff4f4'})
+        target_rows = []
+        for row in rows:
+            # 找到当前行的所有单元格
+            cells = row.find_all('td')
+            if cells and cells[0].get_text(strip=True).isalnum():
+                # 爬取该行数据
+                target_row = []
+                for i, cell in enumerate(cells):
+                    if i == 2 and cell.get_text(strip=True) == "封":
+                        # 处理只有三列数据的行
+                        target_row.append(cell.get_text(strip=True))
+                        target_row.append("")
+                        target_row.append("")
+                    else:
+                        target_row.append(cell.get_text(strip=True))
+                target_rows.append(target_row)
+                # for row in target_rows:
+                #            print("爬取成功")
+        if target_rows:
+            # 初始化foot_data的值为元组(a, b, c, e, date)
+            foot_data.append([a, b, c, e, date] + target_rows[0])
+            for row in target_rows[1:]:
+                foot_data.append(["", "", "", "", "", *row])
+
+
+        else:
+            print("No data found.")
+
+    # 关闭浏览器
+    driver.quit()
+
+    # 步骤5：将foot_data保存到CSV文件中
+    csv_path = os.path.join(folder_path, f'{os.path.splitext(csv_file)[0]}_完成.csv')
+    with open(csv_path, 'w', newline='') as f:
+        writer = csv.writer(f)
+        # 写入表头
+        writer.writerow(['轮次', '主队', '客队', '网址', '结束时间', '比赛时间', '比分', '大', '盘口', '小', '实际时间', '性质'])
+        # 写入数据
+        writer.writerows(foot_data)
+    print(f"已保存文件: {csv_path}")
+
+
+
+
+
+
+
